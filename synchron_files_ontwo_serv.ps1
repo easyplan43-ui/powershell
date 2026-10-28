@@ -10,7 +10,7 @@ if ($cur_serv -eq "sqlserv03") {
     $rem_serv = "sqlserv04"
 } else { $rem_serv = "sqlserv03" }
 $local_path = "$disk$fold_back"
-$net_path   = "\\$rem_serv\${fold_back}$"
+$net_path = "\\$rem_serv\${fold_back}`$"
 try {
    $sqlquery = "SELECT sys.fn_hadr_backup_is_preferred_replica('$dbname') as ColomPref" # Перевірка ролі в Always On
    $psPrefer = (Invoke-sqlcmd -Query $sqlquery -ServerInstance "." -ErrorAction Stop).ColomPref
@@ -28,11 +28,9 @@ if ($psPrefer -eq 1)  {  # --------------------------------- Це виконає
        } else  {     # якщо robocopy передала код 8 в $LASTEXITCODE, тобто помилку  
            throw "Robocopy failed with exit code $LASTEXITCODE during synchronizing from preferred server"   }  
     }  elseif ($locdiskexist -eq $false) {   # Якщо диск на преферд відпав
-          Write-Warning "Critical: server is primary but local backup disk [$local_path] is not accessable!" 
-          exit 1     # виходимо аварійно  щоб SQL Agent дав красний крестик 
-    }  elseif ($remdiskexist -eq $false) {  # Якщо диск на який копіюєм, тобто диск на НЕ преферд сервері - відпав
-          Write-Warning "Critical: server is primary but backup disk [$net_path] on secondary Server [$rem_serv] is not accessable!"
-          exit 1      # виходимо аварійно  щоб SQL Agent дав красний крестик 
+          throw "Critical: server is primary but local backup disk [$local_path] is not accessable!" 
+        }  elseif ($remdiskexist -eq $false) {  # Якщо диск на який копіюєм, тобто диск на НЕ преферд сервері - відпав
+          throw "Critical: server is primary but backup disk [$net_path] on secondary Server [$rem_serv] is not accessable!"
     }   
 }  else  {     #  -------------------- Це виконається тільки на НЕ Преферд СЕКОНДАРІ сервері ------------------------------------------ 
     if ($locdiskexist -eq $true -and $remdiskexist -eq $true)  {  # Якщо є диск на СЕКОНДАРІ і на  преферд серверах
@@ -45,10 +43,8 @@ if ($psPrefer -eq 1)  {  # --------------------------------- Це виконає
            throw "Error during synchronizing logs beetwen secondary and preferred servers!"
        }
     }  elseif ($locdiskexist -eq $false) {   # Якщо диск на CЕКОНДАРІ відпав
-          Write-Warning "Critical: server is secondary but local backup disk [$local_path] is not accessable!" 
-          exit 1      # виходимо аварійно  щоб SQL Agent дав красний крестик 
+          throw "Critical: server is secondary but local backup disk [$local_path] is not accessable!" 
     }  elseif ($remdiskexist -eq $false) {  # Якщо диск на який копіюєм, тобто диск на преферд сервері - відпав
-          Write-Warning "Critical: server is secondary but backup disk [$net_path] on preferred server [$rem_serv] is not accessable!"
-          exit 1      # виходимо аварійно  щоб SQL Agent дав красний крестик 
+          throw "Critical: server is secondary but backup disk [$net_path] on preferred server [$rem_serv] is not accessable!"     
     } 
 }

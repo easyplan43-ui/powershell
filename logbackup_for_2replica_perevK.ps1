@@ -1,3 +1,5 @@
+# Робить лог бекапи на преферд сервері якщо і диск К і бд живі, і робить лог бекапи і на секондарі сервері коли на преферд відпав диск К
+# сервери входять в Availability group
 $ErrorActionPreference = "Stop" # режим переривання помилок
 Set-Location "C:\"  # Фікс для SQL Agent: примусово виходимо з SQL-провайдера на диск C:
 $disk = "K:\"
@@ -28,11 +30,10 @@ if ($pref_serv -eq 1) {
        Write-Output "Log backup successfully made on {$cur_serv} for db: {$dbname}."
        exit 0    # нормально виходимо із цілого скрипта
     }  elseif ($locdiskexist -eq $false) {              # Якщо диск К - відсутній/впав
-          Write-Warning "Critical: server is primary but local backup disk [$local_path] is not accessable!" 
-          exit 1      # виходимо аварійно  щоб SQL Agent дав красний крестик 
+          throw "Critical: server is primary but local backup disk [$local_path] is not accessable!" 
     }  elseif ($locdbstat -ne "ONLINE") {                # Якщо БД не ONLINE/впала
-          Write-Warning "Critical: server is primary but DB [$dbname] is not ONLINE." 
-          exit 1 }   # виходимо аварійно щоб SQL Agent дав красний крестик  
+          throw "Critical: server is primary but DB [$dbname] is not ONLINE." 
+       }   # виходимо аварійно щоб SQL Agent дав красний крестик  
 } else  {     #  -------------------- Це виконається тільки на НЕ Преферд - СЕКОНДАРІ сервері --------------------------------------------
             $DateStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
             $full_name_back = $local_path + "\" + $dbname + "_LOG_"+ $DateStamp + "." + $zakin      # так буде називатися наш файл бекапу логу
@@ -60,10 +61,8 @@ if ($pref_serv -eq 1) {
                            exit 0
                        }  elseif ($locdiskexist -eq $false) {   # Якщо на СЕКОНДАРІ сервері диск К - відсутній/впав
                               Write-Warning "Critical: server is NON preferred but local backup disk [$local_path] is not accessable!" 
-                              exit 1      # виходимо аварійно  щоб SQL Agent дав красний крестик
                        }  elseif ( $locdbstat -ne "ONLINE") {   # Якщо на СЕКОНДАРІ сервері БД - відсутня/впала
-                              Write-Warning "Critical: server is NON preferred but DB [$dbname] is not ONLINE." 
-                              exit 1     # виходимо аварійно  щоб SQL Agent дав красний крестик 
+                              throw "Critical: server is NON preferred but DB [$dbname] is not ONLINE." 
                           }
                     }  
             }                
