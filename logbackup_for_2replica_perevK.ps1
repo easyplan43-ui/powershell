@@ -13,8 +13,8 @@ $local_path = "$disk$fold_back"
 $net_path   = "\\$rem_serv\${fold_back}$"    # це диск на віддаленому сервеку
 $sqlquery = "SELECT sys.fn_hadr_backup_is_preferred_replica('$dbname') as ColomPref" # Перевірка ролі в Always On
 $pref_serv = (Invoke-sqlcmd -Query $sqlquery -ServerInstance ".").ColomPref
-$locdiskexist = Test-Path $local_path  #  перевірка локального диску
-$remdiskexist = [System.IO.Directory]::Exists($net_path)  # Надійніша .NET перевірка мережевої папки замість класичного Test-Path
+$locdiskexist = [System.IO.Directory]::Exists($local_path)  # Надійніша .NET перевірка мережевої папки замість класичного Test-Path
+$remdiskexist = [System.IO.Directory]::Exists($net_path)    # Надійніша .NET перевірка мережевої папки замість класичного Test-Path
 $sqlquery2 = "SELECT state_desc as StateDB FROM sys.databases WHERE name = '$dbname'"  # перевірка стану бд
 $dbresult = Invoke-Sqlcmd -Database master -Query $sqlquery2 -ServerInstance $cur_serv
 if ($dbresult) {  $locdbstat = $dbresult.StateDB
@@ -26,9 +26,11 @@ if ($pref_serv -eq 1) {
        $DateStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
        $full_name_back = $local_path + "\" + $dbname + "_LOG_"+ $DateStamp + "." + $zakin      # так буде називатися наш файл бекапу логу
        $BackupQuery = "BACKUP LOG [$dbname] TO DISK = N'$full_name_back' WITH NOFORMAT, NOINIT, SKIP, NOREWIND, NOUNLOAD, STATS = 10"
-       Invoke-Sqlcmd -ServerInstance $cur_serv -Database "master" -Query $BackupQuery   # тут робиться бекап
-       Write-Output "Log backup successfully made on {$cur_serv} for db: {$dbname}."
-       exit 0    # нормально виходимо із цілого скрипта
+       try {   # тут робиться бекап якщо все Ок інакше йдемо в catch із виводом помилок якщо failed
+          Invoke-Sqlcmd -ServerInstance $cur_serv -Database "master" -Query $BackupQuery   # тут робиться бекап
+          Write-Output "Log backup successfully made on {$cur_serv} for db: {$dbname}."
+          exit 0    # нормально виходимо із цілого скрипта
+       }  catch { Write-Error "Logbackup failed on {$cur_serv} for db: {$dbname}. Error: $_" }   
     }  elseif ($locdiskexist -eq $false) {              # Якщо диск К - відсутній/впав
           throw "Critical: server is primary but local backup disk [$local_path] is not accessable!" 
     }  elseif ($locdbstat -ne "ONLINE") {                # Якщо БД не ONLINE/впала
@@ -38,32 +40,32 @@ if ($pref_serv -eq 1) {
             $DateStamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
             $full_name_back = $local_path + "\" + $dbname + "_LOG_"+ $DateStamp + "." + $zakin      # так буде називатися наш файл бекапу логу
             $BackupQuery = "BACKUP LOG [$dbname] TO DISK = N'$full_name_back' WITH NOFORMAT, NOINIT, SKIP, NOREWIND, NOUNLOAD, STATS = 10" 
-            #  якщо на ПРЕФЕРД сервері відпав диск К, але на не преферд сервері диск К і бд - живі, то немає сенсу чекати 240 с а зразу робимо
+            #  якщо на ПРЕФЕРД сервері відпав диск К і на НЕ преферд сервері диск К і бд - живі, то немає сенсу чекати 240 с а зразу робимо
             if ($remdiskexist -ne $true -and $locdiskexist -eq $true -and $locdbstat -eq "ONLINE")  {    
                 Write-Output "The disk ($disk) is off, on preffered server ($rem_serv). Lets try to make on secondary ($cur_serv)."
-                Invoke-Sqlcmd -ServerInstance $cur_serv -Database "master" -Query $BackupQuery  # робимо Log backup на НЕ преферд сервері
-                Write-Output "SUCCESS: Log backup for ${dbname} completed successfully on ${cur_serv}."
-                exit 0  # спокійний вихід із проги
-            }  else {           # якщо на ПРЕФЕРД сервері не відпав диск К
+                try {   # тут робиться бекап якщо все Ок інакше йдемо в catch із виводом помилок якщо failed
+                   Invoke-Sqlcmd -ServerInstance $cur_serv -Database "master" -Query $BackupQuery  # робимо Log backup на НЕ преферд сервері
+                   Write-Output "SUCCESS: Log backup for ${dbname} completed successfully on ${cur_serv}."
+                   exit 0  # спокійний вихід із проги
+                } catch { Write-Error "Logbackup failed on {$cur_serv} for db: {$dbname}. Error: $_" }   
+                # якщо на ПРЕФЕРД сервері не відпав диск К, і на секондарі живий диск К і бд то 
+            }  elseif ($remdiskexist -eq $true -and $locdiskexist -eq $true -and $locdbstat -eq "ONLINE") {          
                  Write-Output "This is NON-preferred replica. Waiting 4 minutes to check is made log backup on preferred server?"
                  Start-Sleep -Seconds 240
+                  # запитуємо в віддаленого (преферд) сервака чи в нього є свіжий бекап за остані там кілька хвилин вже зроблений ?
                  $sqlquery3 = "SELECT TOP 1 1 AS BackupDone FROM msdb.dbo.backupset WHERE database_name = '$dbname'  
-                    AND type = 'L' AND backup_start_date > DATEADD(minute, -6, GETDATE());"   # запитуємо в віддаленого (преферд) сервака
+                    AND type = 'L' AND backup_start_date > DATEADD(minute, -6, GETDATE());"  
                  $ismadebackup = (Invoke-Sqlcmd -ServerInstance $rem_serv -Database msdb -Query $sqlquery3) 
                  if ($ismadebackup -and $ismadebackup.BackupDone -eq 1)  {  # Якщо бекап зроблений на ПРЕФЕРД серваку 
                      Write-Output "Log backup made on preferred server ($rem_serv). Here dont make it!"
                      exit 0    #  Все спокійно виходимо з коду, нічого далі не виконуємо, бо бекап вже зроблений на преферд
                  }  else {     # Якщо бекап НЕ зроблений на ПРЕФЕРД серваку тоді робимо його на секондарі серваку
                        Write-Output "Log backup is not made on preffered server ($rem_serv). Lets try to make on secondary ($cur_serv)."
-                       if ($locdiskexist -eq $true -and $locdbstat -eq "ONLINE") {   # Якщо на СЕКОНДАРІ серваку і диск живий і бд жива
-                           Invoke-Sqlcmd -ServerInstance $cur_serv -Database "master" -Query $BackupQuery 
-                           Write-Output "SUCCESS: Log backup for ${dbname} completed successfully on ${cur_serv}."
-                           exit 0
-                       }  elseif ($locdiskexist -eq $false) {   # Якщо на СЕКОНДАРІ сервері диск К - відсутній/впав
-                              Write-Warning "Critical: server is NON preferred but local backup disk [$local_path] is not accessable!" 
-                       }  elseif ( $locdbstat -ne "ONLINE") {   # Якщо на СЕКОНДАРІ сервері БД - відсутня/впала
-                              throw "Critical: server is NON preferred but DB [$dbname] is not ONLINE." 
-                          }
-                    }  
-            }                
-        }
+                       try {
+                          Invoke-Sqlcmd -ServerInstance $cur_serv -Database "master" -Query $BackupQuery 
+                          Write-Output "SUCCESS: Log backup for ${dbname} completed successfully on ${cur_serv}."
+                       } catch { Write-Error "Logbackup failed on {$cur_serv} for db: {$dbname}. Error: $_" }   
+                    } 
+               }  else { throw "Critical: server is NON preferred but DB [$dbname]  or disk [$local_path] is not ONLINE." }     
+        }                 
+       
