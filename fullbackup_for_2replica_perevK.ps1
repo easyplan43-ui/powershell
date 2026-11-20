@@ -55,7 +55,7 @@ if ($pref_serv -eq 1) {
                  Start-Sleep -Seconds 300
                  # запитуємо в віддаленого (преферд) сервака чи в нього є свіжий бекап за остані там кілька хвилин вже зроблений ?
                  $sqlquery3 = "SELECT TOP 1 1 AS BackupDone FROM msdb.dbo.backupset WHERE database_name = '$dbname'  
-                    AND type = 'F' AND backup_start_date > DATEADD(minute, -6, GETDATE());"   # запитуємо в віддаленого (преферд) сервака
+                    AND type = 'D' AND backup_start_date > DATEADD(minute, -6, GETDATE());"   # запитуємо в віддаленого (преферд) сервака
                  $ismadebackup = (Invoke-Sqlcmd -ServerInstance $rem_serv -Database msdb -Query $sqlquery3) 
                  if ($ismadebackup -and $ismadebackup.BackupDone -eq 1)  {  # Якщо бекап зроблений на ПРЕФЕРД серваку 
                      Write-Output "Full backup made on preferred server ($rem_serv). Here dont make it!"
